@@ -1,4 +1,4 @@
-DROP TABLE IF EXISTS grades, grade_components, enrollments, courseteachers, courses, teachers, students, users CASCADE;
+DROP TABLE IF EXISTS grades, grade_components, enrollments, courseteachers, courses, teachers, students, users, grades_history CASCADE;
 
 CREATE TABLE users (
     -- I am not sure if I will ever need to define my own sequences in this project
@@ -19,7 +19,7 @@ CREATE TABLE users (
 CREATE TABLE students (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    programme VARCHAR(50) NOT NULL,
+    programme VARCHAR(50) NOT NULL
     -- GPA is calculated on request, and not stored
 );
 
@@ -28,7 +28,7 @@ CREATE TABLE students (
 CREATE TABLE teachers (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    contact_room VARCHAR(50) NOT NULL,
+    contact_room VARCHAR(50) NOT NULL
 );
 
 CREATE TABLE courses (
@@ -59,7 +59,7 @@ CREATE TABLE enrollments (
     -- Not the usual timestamp so to diverse the project with feature richness 
     enrollment_date DATE DEFAULT CURRENT_DATE,
     -- Note: Total grade is nullable, updated automatically via triggers
-    final_grade NUMERIC(4, 2),
+    final_grade NUMERIC(4, 2)
 );
 
 -- Only teachers of a course can change the grades for this course's students
@@ -67,7 +67,7 @@ CREATE TABLE courseteachers (
     id SERIAL PRIMARY KEY,
     teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
     course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Grades table (Linked to grade components for each student)
@@ -86,8 +86,8 @@ CREATE TABLE grades (
 CREATE TABLE grades_history (
     id SERIAL PRIMARY KEY,
     grade_id INTEGER NOT NULL REFERENCES grades(id) ON DELETE CASCADE,
-    old_grade NUMERIC(2, 1),
-    new_grade NUMERIC(2, 1),
+    old_grade NUMERIC(5, 1),
+    new_grade NUMERIC(5, 1),
      -- Teacher who made the change
     teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
     change_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -151,7 +151,7 @@ CREATE OR REPLACE PROCEDURE assign_or_update_grade(
     p_enrollment_id INTEGER,         -- Enrollment ID
     p_grade_component_id INTEGER,    -- Grade component ID
     p_new_grade NUMERIC(5, 2),       -- Grade value to be assigned/updated
-    p_teacher_id INTEGER,            -- Teacher ID who is assigning/updating the grade
+    p_teacher_username VARCHAR,            -- Teacher ID who is assigning/updating the grade
     p_change_reason TEXT             -- Reason for the grade change
 )
 LANGUAGE plpgsql
@@ -159,7 +159,11 @@ AS $$
 DECLARE
     v_existing_grade NUMERIC(5, 2);
     v_grade_id INTEGER;
+    v_teacher_id INTEGER;
 BEGIN
+
+    v_teacher_id := get_user_role_based_id(p_teacher_username);
+
     SELECT grade INTO v_existing_grade
     FROM grades
     WHERE enrollment_id = p_enrollment_id
@@ -173,7 +177,7 @@ BEGIN
             AND grade_component_id = p_grade_component_id;
 
             INSERT INTO grades_history (grade_id, old_grade, new_grade, teacher_id, change_timestamp, change_reason)
-            SELECT g.id, v_existing_grade, p_new_grade, p_teacher_id, CURRENT_TIMESTAMP, p_change_reason
+            SELECT g.id, v_existing_grade, p_new_grade, v_teacher_id, CURRENT_TIMESTAMP, p_change_reason
             FROM grades g
             WHERE g.enrollment_id = p_enrollment_id
             AND g.grade_component_id = p_grade_component_id;
@@ -188,7 +192,7 @@ BEGIN
         RETURNING id INTO v_grade_id;
 
         INSERT INTO grades_history (grade_id, old_grade, new_grade, teacher_id, change_timestamp, change_reason)
-        VALUES (v_grade_id, NULL, p_new_grade, p_teacher_id, CURRENT_TIMESTAMP, p_change_reason);
+        VALUES (v_grade_id, NULL, p_new_grade, v_teacher_id, CURRENT_TIMESTAMP, p_change_reason);
 
         RAISE NOTICE 'Grade for enrollment % and grade component % assigned with %.', p_enrollment_id, p_grade_component_id, p_new_grade;
     END IF;
@@ -208,16 +212,23 @@ DECLARE
     total_score NUMERIC(5, 2) := 0;
     total_max_score NUMERIC(5, 2) := 0;
     average_score NUMERIC(5, 2);
-    final_grade NUMERIC(2, 1);
+    v_final_grade NUMERIC(2, 1);
     missing_grades INTEGER;
+    grade_record RECORD;
+    grade_cursor CURSOR FOR
+        SELECT g.grade, gc.max_score
+        FROM grades g
+        JOIN grade_components gc ON g.grade_component_id = gc.id
+        WHERE g.enrollment_id = NEW.enrollment_id;
 BEGIN
     -- 1. Ensure there are no "missing grades", coz all components have to be graded
-    --  in order to calculate and set the final grade (otherwise we'll have lots of 2.0)
+    -- in order to calculate and set the final grade (otherwise we'll have lots of 2.0)
     SELECT COUNT(*) INTO missing_grades
     FROM grade_components gc
     LEFT JOIN grades g ON g.grade_component_id = gc.id AND g.enrollment_id = NEW.enrollment_id
+    JOIN enrollments e ON e.id = NEW.enrollment_id
     WHERE g.grade IS NULL
-    AND gc.course_id = NEW.course_id;
+    AND gc.course_id = e.course_id;
 
     IF missing_grades > 0 THEN
         RAISE NOTICE 'Not all grade components are graded for this enrolment. Final grade will not be updated.';
@@ -225,15 +236,16 @@ BEGIN
     END IF;
 
     -- 2. Normalize the grade to 0-100
-    FOR grade_record IN
-        SELECT g.grade, gc.max_score
-        FROM grades g
-        JOIN grade_components gc ON g.grade_component_id = gc.id
-        WHERE g.enrollment_id = NEW.enrollment_id
+    OPEN grade_cursor;
     LOOP
-        total_score := total_score;
-        total_max_score := total_max_score + gc.max_score;
+        FETCH grade_cursor INTO grade_record;
+        EXIT WHEN NOT FOUND;
+
+        -- Accumulate the total score and total max score
+        total_score := total_score + grade_record.grade;
+        total_max_score := total_max_score + grade_record.max_score;
     END LOOP;
+    CLOSE grade_cursor;
 
     IF total_max_score > 0 THEN
         average_score := (total_score / total_max_score) * 100;
@@ -244,27 +256,28 @@ BEGIN
 
     -- 3. Map the final grade from 0-100 to 2-5
     IF average_score >= 91 THEN
-        final_grade := 5.0;
+        v_final_grade := 5.0;
     ELSIF average_score >= 81 THEN
-        final_grade := 4.5;
+        v_final_grade := 4.5;
     ELSIF average_score >= 71 THEN
-        final_grade := 4.0;
+        v_final_grade := 4.0;
     ELSIF average_score >= 61 THEN
-        final_grade := 3.5;
+        v_final_grade := 3.5;
     ELSIF average_score >= 51 THEN
-        final_grade := 3.0;
+        v_final_grade := 3.0;
     ELSE
-        final_grade := 2.0;
+        v_final_grade := 2.0;
     END IF;
 
-    -- 4. Finally, update
+    -- 4. Finally, update the final grade
     UPDATE enrollments
-    SET final_grade = final_grade
+    SET final_grade = v_final_grade
     WHERE id = NEW.enrollment_id;
 
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
 
 CREATE TRIGGER update_final_grade_trigger
 AFTER UPDATE ON grades
@@ -339,9 +352,9 @@ BEGIN
 END;
 $$;
 
----------------------------------------------------------------------------
+-------------------------------------------------------------------------
 -- Create admin
----------------------------------------------------------------------------
+-------------------------------------------------------------------------
 
 CREATE OR REPLACE PROCEDURE create_admin(
     p_username VARCHAR(50)
@@ -391,30 +404,392 @@ $$;
 -- Assign a teacher to a course
 ---------------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE assign_teacher_to_course(
-    p_teacher_id INTEGER,      -- Teacher ID to be assigned
-    p_course_id INTEGER        -- Course ID the teacher will be assigned to
+    p_teacher_username VARCHAR,  -- Teacher's username to be assigned
+    p_course_id INTEGER         -- Course ID the teacher will be assigned to
 )
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    v_teacher_id INTEGER;
 BEGIN
+    v_teacher_id := get_user_role_based_id(p_teacher_username);
+
     INSERT INTO courseteachers (teacher_id, course_id)
-    VALUES (p_teacher_id, p_course_id);
-    RAISE NOTICE 'Teacher % assigned to course %.', p_teacher_id, p_course_id;
+    VALUES (v_teacher_id, p_course_id);
+
+    RAISE NOTICE 'Teacher "%" assigned to course %.', p_teacher_username, p_course_id;
 END;
 $$;
+
 
 ---------------------------------------------------------------------------
 -- Enroll a student in a course
 ---------------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE enroll_student(
-    p_student_id INTEGER,     -- Student ID to enroll
-    p_course_id INTEGER       -- Course ID to enroll the student in
+    p_student_username VARCHAR,   -- Student's username to enroll
+    p_course_id INTEGER           -- Course ID to enroll the student in
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_student_id INTEGER;
+BEGIN
+    v_student_id := get_user_role_based_id(p_student_username);
+
+    INSERT INTO enrollments (student_id, course_id)
+    VALUES (v_student_id, p_course_id);
+
+    RAISE NOTICE 'Student "%" enrolled in course %.', p_student_username, p_course_id;
+END;
+$$;
+
+
+---------------------------------------------------------------------------
+-- get_courses_for_teacher
+---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION get_courses_for_teacher(p_username VARCHAR)
+RETURNS TABLE(course_id INT, course_name VARCHAR) AS $$
+DECLARE
+  v_teacher_id INT;
+BEGIN
+  v_teacher_id := get_user_role_based_id(p_username);
+
+  RETURN QUERY
+  SELECT c.id, c.name
+  FROM courses c
+  JOIN courseteachers ct ON c.id = ct.course_id
+  WHERE ct.teacher_id = v_teacher_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+---------------------------------------------------------------------------
+-- get_courses_for_student
+---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION get_courses_for_student(p_username VARCHAR)
+RETURNS TABLE(course_id INT, course_name VARCHAR, final_grade NUMERIC(4, 2)) AS $$
+DECLARE
+  v_student_id INT;
+BEGIN
+  v_student_id := get_user_role_based_id(p_username);
+
+  RETURN QUERY
+  SELECT c.id, c.name, e.final_grade
+  FROM courses c
+  JOIN enrollments e ON c.id = e.course_id
+  WHERE e.student_id = v_student_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+---------------------------------------------------------------------------
+-- get_user_role_based_id
+---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION get_user_role_based_id(
+    p_username VARCHAR
+)
+RETURNS INTEGER AS $$
+DECLARE
+    v_user_id INTEGER;
+    v_role VARCHAR;
+BEGIN
+    SELECT u.id, u.role INTO v_user_id, v_role
+    FROM users u
+    WHERE u.username = p_username;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'User with username "%" not found', p_username;
+    END IF;
+
+    IF v_role = 'student' THEN
+        SELECT s.id INTO v_user_id
+        FROM students s
+        WHERE s.user_id = v_user_id;
+    ELSIF v_role = 'teacher' THEN
+        SELECT t.id INTO v_user_id
+        FROM teachers t
+        WHERE t.user_id = v_user_id;
+    ELSE
+        RAISE EXCEPTION 'Role "%" not recognized for username "%"', v_role, p_username;
+    END IF;
+
+    RETURN v_user_id;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION get_user_role_based_id(
+    p_username VARCHAR,
+    p_required_role VARCHAR
+)
+RETURNS INTEGER AS $$
+DECLARE
+    v_user_id INTEGER;
+    v_role VARCHAR;
+BEGIN
+    SELECT u.id, u.role INTO v_user_id, v_role
+    FROM users u
+    WHERE u.username = p_username;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'User with username "%" not found', p_username;
+    END IF;
+
+    IF v_role != p_required_role THEN
+        RAISE EXCEPTION 'User "%" does not have the required role "%", actual role: "%"', 
+                        p_username, p_required_role, v_role;
+    END IF;
+
+    IF v_role = 'student' THEN
+        SELECT s.id INTO v_user_id
+        FROM students s
+        WHERE s.user_id = v_user_id;
+    ELSIF v_role = 'teacher' THEN
+        SELECT t.id INTO v_user_id
+        FROM teachers t
+        WHERE t.user_id = v_user_id;
+    ELSE
+        RAISE EXCEPTION 'Role "%" not recognized for username "%"', v_role, p_username;
+    END IF;
+
+    RETURN v_user_id;
+END;
+$$ LANGUAGE plpgsql;
+
+---------------------------------------------------------------------------
+-- delete user
+---------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE delete_user(
+    p_username VARCHAR(50)  -- Username of the user to delete
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_user_id INTEGER;
+    v_role VARCHAR(20);
+BEGIN
+    SELECT u.id, u.role INTO v_user_id, v_role
+    FROM users u
+    WHERE u.username = p_username;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'User with username "%" not found', p_username;
+    END IF;
+
+    DELETE FROM users WHERE id = v_user_id;
+
+    RAISE NOTICE 'User "%" and all associated data have been deleted.', p_username;
+END;
+$$;
+
+---------------------------------------------------------------------------
+-- delete course
+---------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE delete_course(
+    p_course_id INTEGER  -- ID of the course to delete
 )
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    INSERT INTO enrollments (student_id, course_id)
-    VALUES (p_student_id, p_course_id);
-    RAISE NOTICE 'Student % enrolled in course %.', p_student_id, p_course_id;
+    -- Delete the course, related enrollments, grades, grade components, and course-teacher assignments will be handled by CASCADE
+    DELETE FROM courses
+    WHERE id = p_course_id;
+
+    RAISE NOTICE 'Course with ID % and all associated data have been deleted.', p_course_id;
 END;
 $$;
+
+
+---------------------------------------------------------------------------
+-- change_course_info
+---------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE change_course_info(
+    p_course_id INTEGER,            -- ID of the course to update
+    p_new_name VARCHAR(100),        -- New name of the course
+    p_new_description TEXT,         -- New description of the course
+    p_new_ects INTEGER              -- New ECTS credits for the course
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    UPDATE courses
+    SET name = p_new_name,
+        description = p_new_description,
+        ects = p_new_ects
+    WHERE id = p_course_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Course with ID % not found.', p_course_id;
+    END IF;
+
+    RAISE NOTICE 'Course with ID % updated successfully.', p_course_id;
+END;
+$$;
+
+---------------------------------------------------------------------------
+-- create_grade_component
+---------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE create_grade_component(
+    p_course_id INTEGER,       -- Course ID the grade component belongs to
+    p_name VARCHAR(100),       -- Name of the grade component
+    p_max_score NUMERIC(5, 2)  -- Maximum score for the grade component
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO grade_components (course_id, name, max_score)
+    VALUES (p_course_id, p_name, p_max_score);
+
+    RAISE NOTICE 'Grade component "%" for course % created.', p_name, p_course_id;
+END;
+$$;
+
+---------------------------------------------------------------------------
+-- change_teacher_room
+---------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE change_teacher_room(
+    p_teacher_username VARCHAR,      -- Teacher's username whose contact room needs to be changed
+    p_new_contact_room VARCHAR(50)   -- New contact room for the teacher
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_teacher_id INTEGER;
+BEGIN
+    v_teacher_id := get_user_role_based_id(p_teacher_username);
+
+    UPDATE teachers
+    SET contact_room = p_new_contact_room
+    WHERE id = v_teacher_id;
+
+    RAISE NOTICE 'Teacher "%" contact room updated to "%".', p_teacher_username, p_new_contact_room;
+END;
+$$;
+
+
+---------------------------------------------------------------------------
+-- view_grade_history
+---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION view_grade_history(p_username VARCHAR)
+RETURNS TABLE(
+    grade_history_id INT,
+    old_grade NUMERIC(5, 2),
+    new_grade NUMERIC(5, 2),
+    change_timestamp TIMESTAMP,
+    change_reason TEXT,
+    teacher_username VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH user_info AS (
+        SELECT id, role
+        FROM users
+        WHERE username = p_username
+    )
+    SELECT 
+        gh.id, 
+        g.grade AS old_grade, 
+        gh.new_grade, 
+        gh.change_timestamp, 
+        gh.change_reason, 
+        u.username AS teacher
+    FROM grades_history gh
+    JOIN grades g ON gh.grade_id = g.id
+    JOIN teachers t ON gh.teacher_id = t.id
+    JOIN users u ON t.user_id = u.id
+    WHERE EXISTS (SELECT 1 FROM user_info ui WHERE ui.id = gh.student_id AND ui.role IN ('teacher', 'admin'))
+    ORDER BY gh.change_timestamp DESC;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+
+
+CREATE OR REPLACE FUNCTION get_enrollments_for_course(for_course_id INT)
+RETURNS TABLE(
+  enrollment_id INT,
+  student_username VARCHAR,
+  final_grade NUMERIC(4, 2)
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT e.id, u.username, e.final_grade
+  FROM enrollments e
+  JOIN students s ON e.student_id = s.id
+  JOIN users u ON s.user_id = u.id
+  WHERE e.course_id = for_course_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION get_grade_components_for_course(for_course_id INT)
+RETURNS TABLE(
+  grade_component_id INT,
+  component_name VARCHAR,
+  max_score NUMERIC(5, 2)
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT gc.id, gc.name, gc.max_score
+  FROM grade_components gc
+  WHERE gc.course_id = for_course_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION get_student_grades_for_enrollment(for_enrollment_id INT)
+RETURNS TABLE(
+  component_name VARCHAR,
+  grade NUMERIC(5, 2)
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT gc.name, g.grade
+  FROM grades g
+  JOIN grade_components gc ON g.grade_component_id = gc.id
+  WHERE g.enrollment_id = for_enrollment_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION get_student_gpa(p_username VARCHAR)
+RETURNS NUMERIC(4, 2) AS $$
+DECLARE
+    v_student_id INTEGER;
+    v_gpa NUMERIC(4, 2);
+BEGIN
+    v_student_id := get_user_role_based_id(p_username);
+
+    SELECT 
+        CASE
+            WHEN SUM(c.ects) = 0 THEN NULL
+            ELSE ROUND(SUM(e.final_grade * c.ects) / SUM(c.ects), 2)
+        END
+    INTO v_gpa
+    FROM courses c
+    JOIN enrollments e ON c.id = e.course_id
+    WHERE e.student_id = v_student_id;
+
+    RETURN v_gpa;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION get_student_ects(p_username VARCHAR)
+RETURNS INTEGER AS $$
+DECLARE
+    v_student_id INTEGER;
+    v_total_ects INTEGER;
+BEGIN
+    v_student_id := get_user_role_based_id(p_username);
+
+    SELECT COALESCE(SUM(c.ects), 0)
+    INTO v_total_ects
+    FROM courses c
+    JOIN enrollments e ON c.id = e.course_id
+    WHERE e.student_id = v_student_id;
+
+    RETURN v_total_ects;
+END;
+$$ LANGUAGE plpgsql;
