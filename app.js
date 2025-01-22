@@ -115,9 +115,7 @@ async function viewGradeHistory(username) {
     ]);
 
     if (res.rows.length === 0) {
-      console.log(
-        "No grade history found or you do not have permission to view it."
-      );
+      console.log("No grade history found.");
     } else {
       console.log("Grade History:");
       res.rows.forEach((row) => {
@@ -401,6 +399,7 @@ async function handleStudent(username) {
       console.log(
         `Programme: ${row.programme}, ECTS: ${row.ects}, GPA: ${row.gpa}`
       );
+      break;
     case "ls my courses":
       await listCoursesForStudent(username);
       break;
