@@ -107,12 +107,16 @@ Run postgres-student-grades-project using the following command:
 ```
 
 2. To see the contents of tables (So no need to use an external table viewer tool)
+   Suggested way for manual testing is to combine `app` and `cli` in a split terminal,
+   as both serve different purposes
 
 ```sh
 ❯ npm run cli
 ```
 
 3. To run an interactive program (application)
+   When it prompts for a username, type `admin`, then you can use `ls users` to see all the users there are,
+   and try other. UI differs on whether you have logged in as an admin, student or teacher.
 
 ```sh
 ❯ npm run app

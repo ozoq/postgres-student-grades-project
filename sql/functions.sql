@@ -3,7 +3,7 @@
 -- get_courses_for_student
 ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION get_courses_for_student(p_username VARCHAR)
-RETURNS TABLE(course_id INT, course_name VARCHAR, final_grade NUMERIC(4, 2)) AS $$
+RETURNS TABLE(course_id INT, course_name VARCHAR, final_grade NUMERIC(5, 2)) AS $$
 DECLARE
   v_student_id INT;
 BEGIN
@@ -119,7 +119,7 @@ CREATE OR REPLACE FUNCTION get_enrollments_for_course(for_course_id INT)
 RETURNS TABLE(
   enrollment_id INT,
   student_username VARCHAR,
-  final_grade NUMERIC(4, 2)
+  final_grade NUMERIC(5, 2)
 ) AS $$
 BEGIN
   RETURN QUERY
@@ -169,10 +169,10 @@ $$ LANGUAGE plpgsql;
 -- get_student_gpa
 ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION get_student_gpa(p_username VARCHAR)
-RETURNS NUMERIC(4, 2) AS $$
+RETURNS NUMERIC(5, 2) AS $$
 DECLARE
     v_student_id INTEGER;
-    v_gpa NUMERIC(4, 2);
+    v_gpa NUMERIC(5, 2);
 BEGIN
     v_student_id := get_user_role_based_id(p_username, 'student');
 
@@ -217,7 +217,7 @@ $$ LANGUAGE plpgsql;
 -- get_student_info
 ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION get_student_info(p_username VARCHAR)
-RETURNS TABLE (programme VARCHAR, ects INTEGER, gpa NUMERIC(4, 2)) AS $$
+RETURNS TABLE (programme VARCHAR, ects INTEGER, gpa NUMERIC(5, 2)) AS $$
 BEGIN
     RETURN QUERY
     SELECT 

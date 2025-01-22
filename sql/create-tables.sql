@@ -59,7 +59,7 @@ CREATE TABLE enrollments (
     -- Not the usual timestamp so to diverse the project with feature richness 
     enrollment_date DATE DEFAULT CURRENT_DATE,
     -- Note: Total grade is nullable, updated automatically via triggers
-    final_grade NUMERIC(4, 2)
+    final_grade NUMERIC(5, 2)
 );
 
 -- Only teachers of a course can change the grades for this course's students
