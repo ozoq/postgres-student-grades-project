@@ -8,20 +8,20 @@
 
 ---
 
-##  Overview
+## Overview
 
 <code>❯ A management tool for a university. Manage courses. Manage user accounts for teachers and students. See and change grades.</code>
 
 ---
 
-##  Features
+## Features
 
 <code>❯ Create students and teachers, create courses, setup courses with grade components (tests, exams),
 assign users their grades, automatically calculate their final grades for courses, view their accumulated ECTS and GPA.</code>
 
 ---
 
-##  Project Structure
+## Project Structure
 
 ```sh
 └── postgres-student-grades-project/
@@ -43,33 +43,39 @@ assign users their grades, automatically calculate their final grades for course
         └── utils.js
 ```
 
----
-##  Getting Started
+## Table relations diagram
 
-###  Prerequisites
+<img src="./Diagram.svg">
+<br><br>
+---
+
+## Getting Started
+
+### Prerequisites
 
 Have node.js and npm installed.
 Have postgres instance available.
 
-###  Installation
+### Installation
 
 Install postgres-student-grades-project using one of the following methods:
 
 **Build from source:**
 
 1. Clone the postgres-student-grades-project repository:
+
 ```sh
 ❯ git clone https://github.com/ozoq/postgres-student-grades-project postgres-student-grades-project
 Or from another repo on a GitLab mirror
 ```
 
 2. Navigate to the project directory:
+
 ```sh
 ❯ cd postgres-student-grades-project
 ```
 
 3. Install the project dependencies:
-
 
 **Using `npm`** &nbsp; [<img align="center" src="https://img.shields.io/badge/npm-CB3837.svg?style={badge_style}&logo=npm&logoColor=white" />](https://www.npmjs.com/)
 
@@ -89,20 +95,25 @@ export default {
 };
 ```
 
-###  Usage
+### Usage
+
 Run postgres-student-grades-project using the following command:
 **Using `npm`** &nbsp; [<img align="center" src="https://img.shields.io/badge/npm-CB3837.svg?style={badge_style}&logo=npm&logoColor=white" />](https://www.npmjs.com/)
 
 1. To run the `.sql` files to setup the tables, functions, procedures, triggers and seed the database
+
 ```sh
 ❯ npm run setup
 ```
 
 2. To see the contents of tables (So no need to use an external table viewer tool)
+
 ```sh
 ❯ npm run cli
 ```
+
 3. To run an interactive program (application)
+
 ```sh
 ❯ npm run app
 ```
