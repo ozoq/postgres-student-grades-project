@@ -117,3 +117,9 @@ Run postgres-student-grades-project using the following command:
 ```sh
 ❯ npm run app
 ```
+
+4. To run tests (via jest)
+
+```sh
+❯ npm run test
+```
