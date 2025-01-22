@@ -1,14 +1,7 @@
 import pg from "pg";
 const { Client } = pg;
 import fs from "fs";
-
-const config = {
-  user: "postgres",
-  host: "localhost",
-  database: "projdb4",
-  password: "postgres",
-  port: 5432,
-};
+import config from "./config.js";
 
 export const client = new Client(config);
 

@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { client } from "./dbClient.js";
+import { client } from "./src/dbClient.js";
 const program = new Command();
 
 client.connect();
